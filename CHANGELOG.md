@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Render `Thinking:` labels in the TUI without rewriting signed thinking text, preventing Claude Bridge from discarding the live query between tool calls.
+- Thinking labels no longer modify saved assistant messages. Earlier versions wrote a colored `Thinking:` prefix into every thinking block and stripped it again before the next request, but the stripping also trimmed whitespace, so the text sent back no longer matched what the provider had signed. Claude Bridge treats that as rewritten history: on every tool call it dropped the query waiting for the tool result, rebuilt the session, and re-wrote the prompt cache from that point, which cost extra cache-write tokens and sometimes produced "No response requested." replies. Labels are now added only when the TUI renders thinking (`registerMarkdownTransformer`); on Pi versions without that API, thinking is shown without the label.
 
 ## [0.5.0] - 2026-07-03
 
