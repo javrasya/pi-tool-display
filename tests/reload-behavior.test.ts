@@ -9,7 +9,6 @@ import { Text } from "@earendil-works/pi-tui";
 import toolDisplayExtension from "../src/index.ts";
 import { registerToolDisplayOverrides } from "../src/tool-overrides.ts";
 import { renderBashCall } from "../src/bash-display.ts";
-import { registerThinkingLabeling } from "../src/thinking-label.ts";
 import registerNativeUserMessageBox from "../src/user-message-box-native.ts";
 import { createToolDisplayDebugLogger } from "../src/debug-logger.ts";
 import { loadToolDisplayConfig, saveToolDisplayConfig } from "../src/config-store.ts";
@@ -566,81 +565,21 @@ test("6: /tool-display command is registered on first call and re-registered on 
 // 7. Thinking label cleanup
 // ---------------------------------------------------------------------------
 
-test("7: thinking label event handlers are registered on each extension call", () => {
+test("7: each extension load registers a render-only thinking label", () => {
   const { api, capturedHandlers } = createApiStub();
-
-  // First call registers thinking label handlers
-  registerThinkingLabeling(api);
-  const handlerEvents = capturedHandlers.map((h) => h.event);
-
-  assert.ok(handlerEvents.includes("message_update"), "message_update registered");
-  assert.ok(handlerEvents.includes("message_end"), "message_end registered");
-  assert.ok(handlerEvents.includes("context"), "context registered");
-
-  // Count handlers per event
-  const messageUpdateCount = capturedHandlers.filter(
-    (h) => h.event === "message_update",
-  ).length;
-  const messageEndCount = capturedHandlers.filter(
-    (h) => h.event === "message_end",
-  ).length;
-  const contextCount = capturedHandlers.filter(
-    (h) => h.event === "context",
-  ).length;
-
-  assert.equal(messageUpdateCount, 1, "one message_update handler after first call");
-  assert.equal(messageEndCount, 1, "one message_end handler after first call");
-  assert.equal(contextCount, 1, "one context handler after first call");
-
-  // Second call with same API — duplicate prevention skips re-registration
-  registerThinkingLabeling(api);
-  const messageUpdateAfterSecond = capturedHandlers.filter(
-    (h) => h.event === "message_update",
-  ).length;
-
-  assert.equal(
-    messageUpdateAfterSecond,
-    1,
-    "duplicate prevention: no new handlers on second call",
-  );
-
-  // Simulate reload by finding and invoking the session_shutdown handler
-  const shutdownHandler = capturedHandlers.find(
-    (h) => h.event === "session_shutdown",
-  )?.handler;
-  assert.ok(shutdownHandler, "session_shutdown handler registered");
-
-  // Invoke session_shutdown with reason "reload" — this resets the guard
-  if (shutdownHandler) {
-    shutdownHandler({ reason: "reload" });
-  }
-
-  // Third call — guard was reset by reload, so handlers register again
-  registerThinkingLabeling(api);
-  const messageUpdateAfterReload = capturedHandlers.filter(
-    (h) => h.event === "message_update",
-  ).length;
-
-  assert.equal(
-    messageUpdateAfterReload,
-    2,
-    "handlers re-register after reload resets the guard",
-  );
-});
-
-test("7: thinking label handlers do not throw when invoked after reload", async () => {
-  const { api } = createApiStub();
-
-  // First registration
+  const registrations: string[][] = [];
+  Object.assign(api, {
+    registerMarkdownTransformer(_transform: unknown, options: { messageTypes: string[] }) {
+      registrations.push(options.messageTypes);
+    },
+  });
+  toolDisplayExtension(api);
   toolDisplayExtension(api);
 
-  // Reload
-  toolDisplayExtension(api);
-
-  // Should be able to invoke all thinking handlers without error
-  // (We can't easily extract individual handlers from the stub, but the
-  // extension function itself being callable twice proves basic safety.)
-  assert.ok(true, "extension can be initialized twice with thinking label handlers");
+  assert.deepEqual(registrations, [["assistant-thinking"], ["assistant-thinking"]]);
+  assert.ok(!capturedHandlers.some(({ event }) =>
+    ["message_update", "message_end", "context", "context_with_system"].includes(event),
+  ));
 });
 
 // ---------------------------------------------------------------------------
@@ -1171,9 +1110,6 @@ test("lifecycle: full session lifecycle (init→reload→invoke handlers) does n
 
   // Invoke all registered lifecycle handlers
   for (const { event, handler } of capturedHandlers) {
-    if (event === "message_update" || event === "message_end" || event === "context") {
-      continue; // These need specific event shapes; tested separately
-    }
     const result = handler({}, { ui: { theme: {}, notify: () => {} } });
     if (result instanceof Promise) {
       await assert.doesNotReject(
@@ -1188,9 +1124,6 @@ test("lifecycle: full session lifecycle (init→reload→invoke handlers) does n
 
   // Invoke handlers again after reload
   for (const { event, handler } of capturedHandlers) {
-    if (event === "message_update" || event === "message_end" || event === "context") {
-      continue;
-    }
     const result = handler({}, { ui: { theme: {}, notify: () => {} } });
     if (result instanceof Promise) {
       await assert.doesNotReject(
@@ -1213,7 +1146,7 @@ test("reload behavior test suite: summary of all tests", () => {
     "4: MCP override cleanup (re-decoration on reload)",
     "5: User message box cleanup (prototype re-patching)",
     "6: Command unregistration / re-registration",
-    "7: Thinking label cleanup (handler re-registration)",
+    "7: Thinking label render registration",
     "8: Lifecycle event cleanup (session_start / before_agent_start)",
     "9: Double reload safety",
     "10: Partial reload (mid-spinner cleanup)",

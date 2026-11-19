@@ -31,7 +31,7 @@ OpenCode-style tool rendering for the [Pi coding agent](https://github.com/mario
 - **Progressive collapsed diff hints** that shorten automatically on small terminal widths instead of overflowing
 - **Hashline-anchor diff gutters** that preserve `LINE#HASH` labels from anchored read/edit output when those lines are rendered in diffs
 - **Three presets**: `opencode`, `balanced`, and `verbose`
-- **Thinking labels** during streaming and final message rendering, with context sanitization to avoid leaking presentation labels back into future model turns
+- **Render-only thinking labels** during streaming and when viewing completed messages, on Pi versions with Markdown transformers
 - **Optional native user message box** with markdown-aware rendering and safer ANSI/background handling
 - **Per-tool ownership toggles** so this extension can coexist with other renderer extensions
 - **Capability-aware settings** that keep MCP and RTK-specific controls aligned with the current environment
@@ -293,7 +293,9 @@ When content is available, `write` call summaries include line count and byte si
 
 ### Thinking labels
 
-Thinking blocks are labeled during streaming and on final messages. Before the next model turn, the extension sanitizes those presentation labels out of the stored assistant context so they do not accumulate or pollute future prompts.
+On Pi versions with `registerMarkdownTransformer`, visible thinking blocks get a `Thinking:` label in the TUI. Neither the saved message nor the model context is changed. Older Pi versions use their native thinking display without the added label.
+
+Earlier versions of this extension changed saved thinking text. For Claude Bridge, start a new session after upgrading; this change does not rewrite existing transcripts or recover the original signed text.
 
 ### Native user message box
 
@@ -358,7 +360,7 @@ pi-tool-display/
 │   ├── pending-diff-preview.ts      # Partial edit/write preview projection helpers
 │   ├── presets.ts                   # Preset definitions and matching
 │   ├── render-utils.ts              # Shared rendering helpers
-│   ├── thinking-label.ts            # Thinking label formatting and context sanitization
+│   ├── thinking-label.ts            # Render-only thinking labels
 │   ├── tool-overrides.ts            # Built-in, MCP, and opt-in custom renderer overrides
 │   ├── types.ts                     # Shared config and type definitions
 │   ├── user-message-box-markdown.ts # Markdown extraction for user message rendering

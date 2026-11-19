@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Render `Thinking:` labels in the TUI without rewriting signed thinking text, preventing Claude Bridge from discarding the live query between tool calls.
+
 ## [0.5.0] - 2026-07-03
 
 ### Added

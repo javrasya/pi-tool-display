@@ -1,72 +1,58 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerThinkingLabeling } from "../src/thinking-label.ts";
 
-type CapturedHandler = (event: unknown, ctx?: unknown) => Promise<void> | void;
-
-function captureThinkingHandlers(): Map<string, CapturedHandler> {
-  const handlers = new Map<string, CapturedHandler>();
+function register() {
+  const handlers = new Map<string, (event: unknown) => unknown>();
+  const renderers: Array<{ render: (markdown: string) => string; messageTypes: string[] }> = [];
   registerThinkingLabeling({
-    on(eventName: string, handler: CapturedHandler): void {
-      handlers.set(eventName, handler);
+    on(event: string, handler: (event: unknown) => unknown) {
+      handlers.set(event, handler);
     },
-  } as never);
-  return handlers;
+    registerMarkdownTransformer(render: (markdown: string) => string, options: { messageTypes: string[] }) {
+      renderers.push({ render, messageTypes: options.messageTypes });
+    },
+  } as unknown as ExtensionAPI);
+  return { handlers, renderers };
 }
 
-test("thinking label formatting prefixes supported provider thinking blocks for display", async () => {
-  const handlers = captureThinkingHandlers();
-  const event = {
-    message: {
-      role: "assistant",
-      api: "anthropic-messages",
-      content: [{ type: "thinking", thinking: "checking options" }],
-    },
+test("signed thinking is unchanged through streaming, finalization and provider context", async () => {
+  const { handlers, renderers } = register();
+  const message = {
+    role: "assistant",
+    provider: "claude-bridge",
+    api: "claude-bridge",
+    content: [{ type: "thinking", thinking: "\nThinking: check paths.\n\n", thinkingSignature: "signed-by-provider" }],
   };
-
-  await handlers.get("message_update")?.(event, {
-    ui: { theme: { fg: (color: string, text: string) => `[${color}]${text}` } },
-  });
-
-  assert.deepEqual(event.message.content, [
-    { type: "thinking", thinking: "[accent]Thinking: [thinkingText]checking options" },
-  ]);
+  const original = structuredClone(message);
+  await handlers.get("message_update")?.({ message });
+  assert.deepEqual(message, original, "streaming display must not change the message");
+  await handlers.get("message_end")?.({ message });
+  assert.deepEqual(message, original, "what Pi saves must match the provider's output");
+  const context = { messages: [structuredClone(message)] };
+  const result = await handlers.get("context")?.(context) as typeof context | undefined;
+  assert.deepEqual((result ?? context).messages, [original], "replay must preserve signed bytes");
+  assert.equal(renderers.length, 1);
+  assert.deepEqual(renderers[0].messageTypes, ["assistant-thinking"]);
+  assert.equal(renderers[0].render(message.content[0].thinking), "**Thinking:**\n\ncheck paths.\n\n");
+  assert.deepEqual(message, original);
 });
 
-test("thinking label formatting leaves unsupported explicit OpenAI APIs unchanged", async () => {
-  const handlers = captureThinkingHandlers();
-  const thinkingBlock = { type: "thinking", thinking: "raw reasoning" };
-  const event = {
-    message: {
-      role: "assistant",
-      api: "openai-chat",
-      content: [thinkingBlock],
-    },
-  };
-
-  await handlers.get("message_end")?.(event, {});
-
-  assert.equal(event.message.content[0], thinkingBlock);
+test("thinking labels keep the Markdown body intact", () => {
+  const { renderers: [{ render }] } = register();
+  const markdown = "```text\nfirst line\nsecond line\n```";
+  assert.equal(render(markdown), `**Thinking:**\n\n${markdown}`);
+  assert.equal(render("  \n"), "  \n");
 });
 
-test("thinking context sanitization removes presentation labels before model context", async () => {
-  const handlers = captureThinkingHandlers();
-  const event = {
-    messages: [
-      {
-        role: "assistant",
-        content: [
-          { type: "thinking", thinking: "\u001b[31mThinking: \u001b[0mThinking: final answer path" },
-        ],
-      },
-      { role: "user", content: "keep me" },
-    ],
-  };
+test("a label saved by earlier versions is not rendered twice", () => {
+  const { renderers: [{ render }] } = register();
+  assert.equal(render("\x1b[38;2;140;111;149mThinking:\x1b[39m \x1b[38;2;143;143;143mVerify this.\x1b[39m"), "**Thinking:**\n\nVerify this.");
+});
 
-  await handlers.get("context")?.(event, {});
-
-  assert.deepEqual(event.messages[0]?.content, [
-    { type: "thinking", thinking: "final answer path" },
-  ]);
-  assert.deepEqual(event.messages[1], { role: "user", content: "keep me" });
+test("hosts without the Markdown API do not install message-mutating fallbacks", () => {
+  const events: string[] = [];
+  registerThinkingLabeling({ on: (event: string) => events.push(event) } as unknown as ExtensionAPI);
+  assert.deepEqual(events, []);
 });
